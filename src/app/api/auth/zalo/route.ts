@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, User } from '@prisma/client';
 import crypto from 'crypto';
 import { Session } from '@supabase/supabase-js';
 import Cors from 'cors';
@@ -12,9 +12,13 @@ const cors = Cors({
 
 // Helper method to wait for a middleware to execute before continuing
 // And to throw an error when an error happens in a middleware
-function runMiddleware(req: NextRequest, res: NextResponse, fn: Function) {
+function runMiddleware(
+  req: NextRequest,
+  res: NextResponse,
+  fn: (req: NextRequest, res: NextResponse, next: (result: unknown) => void) => void
+) {
   return new Promise((resolve, reject) => {
-    fn(req, res, (result: any) => {
+    fn(req, res, (result: unknown) => {
       if (result instanceof Error) {
         return reject(result);
       }
@@ -116,13 +120,13 @@ export async function POST(req: NextRequest, res: NextResponse) {
 
     // Define the return type explicitly
     interface AuthResponse {
-      user: any;
+      user: User;
       session: Session | null;
     }
 
     const response: AuthResponse = {
       user,
-      session: (sessionData?.session as Session) || null
+      session: sessionData?.session || null
     };
 
     return NextResponse.json(response);
