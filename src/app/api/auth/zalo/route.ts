@@ -10,13 +10,8 @@ const cors = Cors({
   methods: ['POST', 'GET', 'HEAD'],
 });
 
-// Helper method to wait for a middleware to execute before continuing
-// And to throw an error when an error happens in a middleware
-function runMiddleware(
-  req: NextRequest,
-  res: NextResponse,
-  fn: (req: NextRequest, res: NextResponse, next: (result: unknown) => void) => void
-) {
+// Update the runMiddleware function to use NextRequest and NextResponse
+const runMiddleware = (req: NextRequest, res: NextResponse, fn: Function) => {
   return new Promise((resolve, reject) => {
     fn(req, res, (result: unknown) => {
       if (result instanceof Error) {
@@ -25,7 +20,7 @@ function runMiddleware(
       return resolve(result);
     });
   });
-}
+};
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,8 +37,8 @@ const calculateHMacSHA256 = (data: string, secretKey: string) => {
   return hmac.digest("hex");
 };
 
-export async function POST(req: NextRequest, res: NextResponse) {
-  // Run the middleware
+export async function POST(req: NextRequest) {
+  const res = NextResponse.next();
   await runMiddleware(req, res, cors);
 
   console.log('Received request to /api/auth/zalo');
@@ -109,24 +104,38 @@ export async function POST(req: NextRequest, res: NextResponse) {
 
     // Generate a session token for the app
     console.log('Generating session token...');
-    const { data: sessionData, error: sessionError } = await supabase.auth.admin.createUser({
+    const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
       email: `${user.zaloId}@zalo.user`,
-      email_confirm: true,
+      password: user.zaloId, // Use a more secure method in production
     });
 
     if (sessionError) throw sessionError;
 
     console.log('Session token generated:', sessionData);
 
-    // Define the return type explicitly
+    // Update the AuthResponse interface
     interface AuthResponse {
-      user: User;
+      user: {
+        id: string;
+        zaloId: string;
+        name: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      };
       session: Session | null;
     }
 
     const response: AuthResponse = {
-      user,
-      session: sessionData?.session || null
+      user: {
+        id: user.id,
+        zaloId: user.zaloId,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      },
+      session: sessionData.session
     };
 
     return NextResponse.json(response);
