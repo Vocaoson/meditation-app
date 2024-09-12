@@ -3,24 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import { PrismaClient, User } from '@prisma/client';
 import crypto from 'crypto';
 import { Session } from '@supabase/supabase-js';
-import Cors from 'cors';
-
-// Initialize the cors middleware
-const cors = Cors({
-  methods: ['POST', 'GET', 'HEAD'],
-});
-
-// Update the runMiddleware function to use NextRequest and NextResponse
-// const runMiddleware = (req: NextRequest, res: NextResponse, fn: Function) => {
-//   return new Promise((resolve, reject) => {
-//     fn(req, res, (result: unknown) => {
-//       if (result instanceof Error) {
-//         return reject(result);
-//       }
-//       return resolve(result);
-//     });
-//   });
-// };
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -46,8 +28,8 @@ const calculateHMacSHA256 = (data: string, secretKey: string) => {
 interface AuthResponse {
   user: {
     id: string;
-    zaloId: string | null; // Allow zaloId to be null
-    name: string | null; // Allow name to be null
+    zaloId: string | null;
+    name: string | null;
     email: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -55,12 +37,31 @@ interface AuthResponse {
   session: Session | null;
 }
 
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
-  console.log('Received request to /api/auth/zalo');
-  const { access_token } = await req.json();
-  console.log('Access token received:', access_token);
+  console.log('Received POST request to /api/auth/zalo');
+
+  // Set CORS headers
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
 
   try {
+    const { access_token } = await req.json();
+    console.log('Access token received:', access_token);
+
     // Calculate appsecret_proof
     const appsecret_proof = calculateHMacSHA256(access_token, ZALO_APP_SECRET_KEY);
     console.log('Calculated appsecret_proof:', appsecret_proof);
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
 
       if (createUserError && createUserError.message !== 'User already registered') {
         console.error('User creation failed:', createUserError);
-        return NextResponse.json({ error: 'Authentication failed' }, { status: 400 });
+        return NextResponse.json({ error: 'Authentication failed' }, { status: 400, headers });
       }
 
       // If user already exists or was just created, try to sign in
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
 
       if (signInError) {
         console.error('Sign in failed:', signInError);
-        return NextResponse.json({ error: 'Authentication failed' }, { status: 400 });
+        return NextResponse.json({ error: 'Authentication failed' }, { status: 400, headers });
       }
 
       authData = signInData;
@@ -159,9 +160,12 @@ export async function POST(req: NextRequest) {
       session: authData.session
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, { headers });
   } catch (error) {
     console.error('Error during Zalo authentication:', error);
-    return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
+    return NextResponse.json({ error: 'Authentication failed' }, { 
+      status: 500,
+      headers,
+    });
   }
 }
