@@ -11,20 +11,26 @@ const cors = Cors({
 });
 
 // Update the runMiddleware function to use NextRequest and NextResponse
-const runMiddleware = (req: NextRequest, res: NextResponse, fn: Function) => {
-  return new Promise((resolve, reject) => {
-    fn(req, res, (result: unknown) => {
-      if (result instanceof Error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
-  });
-};
+// const runMiddleware = (req: NextRequest, res: NextResponse, fn: Function) => {
+//   return new Promise((resolve, reject) => {
+//     fn(req, res, (result: unknown) => {
+//       if (result instanceof Error) {
+//         return reject(result);
+//       }
+//       return resolve(result);
+//     });
+//   });
+// };
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
 const prisma = new PrismaClient();
@@ -37,10 +43,19 @@ const calculateHMacSHA256 = (data: string, secretKey: string) => {
   return hmac.digest("hex");
 };
 
-export async function POST(req: NextRequest) {
-  const res = NextResponse.next();
-  await runMiddleware(req, res, cors);
+interface AuthResponse {
+  user: {
+    id: string;
+    zaloId: string | null; // Allow zaloId to be null
+    name: string | null; // Allow name to be null
+    email: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+  session: Session | null;
+}
 
+export async function POST(req: NextRequest) {
   console.log('Received request to /api/auth/zalo');
   const { access_token } = await req.json();
   console.log('Access token received:', access_token);
@@ -91,51 +106,57 @@ export async function POST(req: NextRequest) {
 
     console.log('User data:', user);
 
-    // Create a Supabase session
-    console.log('Creating Supabase session...');
-    const { data, error } = await supabase.auth.signUp({
+    // Create or sign in with Supabase using Zalo ID
+    console.log('Authenticating with Supabase...');
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: `${user.zaloId}@zalo.user`,
       password: user.zaloId, // Use a more secure method in production
     });
 
-    if (error) throw error;
+    let authData;
 
-    console.log('Supabase session created:', data);
+    if (error) {
+      console.log('User not found in Supabase, attempting to create or retrieve...');
+      const { data: userData, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
+        email: `${user.zaloId}@zalo.user`,
+        password: user.zaloId,
+        email_confirm: true,
+        user_metadata: { zalo_id: user.zaloId, name: user.name }
+      });
 
-    // Generate a session token for the app
-    console.log('Generating session token...');
-    const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
-      email: `${user.zaloId}@zalo.user`,
-      password: user.zaloId, // Use a more secure method in production
-    });
+      if (createUserError && createUserError.message !== 'User already registered') {
+        console.error('User creation failed:', createUserError);
+        return NextResponse.json({ error: 'Authentication failed' }, { status: 400 });
+      }
 
-    if (sessionError) throw sessionError;
+      // If user already exists or was just created, try to sign in
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: `${user.zaloId}@zalo.user`,
+        password: user.zaloId,
+      });
 
-    console.log('Session token generated:', sessionData);
+      if (signInError) {
+        console.error('Sign in failed:', signInError);
+        return NextResponse.json({ error: 'Authentication failed' }, { status: 400 });
+      }
 
-    // Update the AuthResponse interface
-    interface AuthResponse {
-      user: {
-        id: string;
-        zaloId: string;
-        name: string | null;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
-      };
-      session: Session | null;
+      authData = signInData;
+    } else {
+      authData = data;
     }
+
+    console.log('Supabase authentication successful:', authData);
 
     const response: AuthResponse = {
       user: {
         id: user.id,
         zaloId: user.zaloId,
-        name: user.name,
-        email: user.email,
+        name: user.name || null, // Use null if name is undefined or empty
+        email: null, // We don't have an email
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       },
-      session: sessionData.session
+      session: authData.session
     };
 
     return NextResponse.json(response);
